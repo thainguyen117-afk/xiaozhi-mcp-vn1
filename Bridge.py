@@ -55,53 +55,47 @@ async def get_news(query: str = "Viet Nam"):
 # ---------- Music: Zing -> NCT -> SoundCloud -> iTunes -> Deezer ----------
 async def search_music(q: str):
     async with httpx.AsyncClient(timeout=15, headers=UA, follow_redirects=True) as c:
-        # 1. SoundCloud (on dinh nhat, co stream mp3 truc tiep)
+        # 1. Deezer TRUOC - vi tra ve .mp3, ESP32 phat duoc ngay
+        data = await fetch_json(c, "https://api.deezer.com/search", params={"q": q})
+        items = (data or {}).get("data") or []
+        if items and items[0].get("preview"):
+            v = items[0]
+            return music_result(v["preview"], v.get("title"), (v.get("artist") or {}).get("name"), "deezer", "audio/mpeg")
+        # 2. SoundCloud - .mp3
         data = await fetch_json(c, "https://api-v2.soundcloud.com/search/tracks",
             params={"q": q, "client_id": SC_CLIENT_ID, "limit": 5})
         if data:
             for v in data.get("collection", []):
-                tid = v.get("id")
-                streams = await fetch_json(c, f"https://api-v2.soundcloud.com/tracks/{tid}/streams",
+                streams = await fetch_json(c, f"https://api-v2.soundcloud.com/tracks/{v.get('id')}/streams",
                     params={"client_id": SC_CLIENT_ID})
-                url = (streams or {}).get("http_mp3_128_url") or (streams or {}).get("hls_url")
+                url = (streams or {}).get("http_mp3_128_url")
                 if url:
-                    return music_result(url, v.get("title"), (v.get("user") or {}).get("username"), "soundcloud")
-
-        # 2. Zing MP3
+                    return music_result(url, v.get("title"), (v.get("user") or {}).get("username"), "soundcloud", "audio/mpeg")
+        # 3. Zing MP3 - .mp3
         data = await fetch_json(c, "https://zingmp3.vn/api/v2/search", params={"q": q})
         songs = ((data or {}).get("data") or {}).get("songs") or []
         if songs:
             v = songs[0]
-            stream = await fetch_json(c, "https://zingmp3.vn/api/v2/song/get/streaming",
-                params={"id": v.get("encodeId")})
+            stream = await fetch_json(c, "https://zingmp3.vn/api/v2/song/get/streaming", params={"id": v.get("encodeId")})
             url = ((stream or {}).get("data") or {}).get("128")
             if url:
-                return music_result(url, v.get("title"), v.get("artistsNames"), "zingmp3")
-
-        # 3. Nhaccuatui
+                return music_result(url, v.get("title"), v.get("artistsNames"), "zingmp3", "audio/mpeg")
+        # 4. Nhaccuatui
         data = await fetch_json(c, "https://www.nhaccuatui.com/api/search", params={"q": q, "type": "song"})
         items = (data or {}).get("data") or (data or {}).get("songs") or []
         if items:
             v = items[0]
             url = v.get("streamUrl") or v.get("previewUrl")
-            if url:
-                return music_result(url, v.get("title") or v.get("name"), v.get("artist"), "nhaccuatui")
-
-        # 4. iTunes VN (fallback chac chan chay, preview 30s)
+            if url and ".mp3" in url:
+                return music_result(url, v.get("title") or v.get("name"), v.get("artist"), "nhaccuatui", "audio/mpeg")
+        # 5. iTunes - CHI LA DU PHONG, vi no la .m4a, ESP32 KHONG phat duoc, chi de test
         data = await fetch_json(c, "https://itunes.apple.com/search",
             params={"term": q, "media": "music", "country": "VN", "limit": 5})
         results = (data or {}).get("results") or []
         if results and results[0].get("previewUrl"):
             v = results[0]
-            return music_result(v["previewUrl"], v.get("trackName"), v.get("artistName"), "itunes", "audio/mp4")
-
-        # 5. Deezer (fallback)
-        data = await fetch_json(c, "https://api.deezer.com/search", params={"q": q})
-        items = (data or {}).get("data") or []
-        if items and items[0].get("preview"):
-            v = items[0]
-            return music_result(v["preview"], v.get("title"), (v.get("artist") or {}).get("name"), "deezer")
-
+            print(f"[WARN] Chi con iTunes .m4a, ESP32 se khong phat duoc: {v.get('trackName')}", flush=True)
+            return music_result(v["previewUrl"], v.get("trackName"), v.get("artistName"), "itunes-m4a-KHONG-PHAT-DUOC", "audio/mp4")
     return {"error": f"Khong tim thay bai '{q}'", "note": "Thu ten bai + ten ca si khac"}
 
 # ---------- HTTP (de test nhanh) ----------
@@ -141,17 +135,11 @@ async def handle_tool(name: str, q: str):
     if name == "get_news":
         return [{"type": "text", "text": json.dumps(await get_news(q), ensure_ascii=False)[:4000]}]
     if name in ("search_music", "play_music"):
-        print(f"[MCP] {name} called q={q}", flush=True)
         out = await search_music(q)
-        print(f"[MCP] {name} result: {out}", flush=True)
-        if out.get("type") == "resource_link":
-            # Tra ca 2 dang: resource_link de ESP32 phat + text de LLM doc duoc link
-            return [
-                {"type": "resource_link", "uri": out["uri"], "url": out["url"],
-                 "name": f"{out.get('title','')} - {out.get('author','')}",
-                 "description": out["url"], "mimeType": out.get("mimeType", "audio/mpeg")},
-                {"type": "text", "text": json.dumps({"title": out.get("title"), "author": out.get("author"), "url": out.get("url"), "source": out.get("source"), "instruction": "Hay phat url audio nay ngay, dung resource_link o tren"}, ensure_ascii=False)}
-            ]
+        if out.get("type") == "resource_link":  # QUAN TRONG: tra dung dang resource_link
+            return [{"type": "resource_link", "uri": out["uri"], "url": out["url"],
+                     "name": f"{out.get('title','')} - {out.get('author','')}",
+                     "description": out["url"], "mimeType": out.get("mimeType", "audio/mpeg")}]
         return [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}]
     if name == "get_top_charts":
         return await handle_tool("search_music", "nhac hot Viet Nam hom nay")
