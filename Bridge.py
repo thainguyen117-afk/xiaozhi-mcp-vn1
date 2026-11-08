@@ -4,7 +4,7 @@ Chay: python bridge.py
 Env: MCP_ENDPOINT, TAVILY_API_KEY
 Tools: brave_search, get_news, search_music, play_music, get_top_charts
 """
-import asyncio, json, os
+import asyncio, base64, json, os
 import httpx
 import uvicorn
 import websockets
@@ -17,15 +17,22 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 PORT = int(os.getenv("PORT", "10000"))
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36"}
 SC_CLIENT_ID = os.getenv("SOUNDCLOUD_CLIENT_ID", "iZIs9mchVcX5lhVRyQGGAYlNPVldzAo")
+AUDIO_CACHE = {}  # uri -> url audio that, de resources/read lay file that
 
 app = FastAPI()
 
 # ---------- Helpers ----------
 def music_result(url, title, author, source, mime="audio/mpeg"):
-    """Format chuan de Xiaozhi phat: resource_link, khong phai text."""
+    """Format chuan de Xiaozhi phat: uri rieng cho tung bai, de resources/read biet lay file nao."""
+    import hashlib
+    uid = hashlib.md5(url.encode()).hexdigest()[:12]
+    uri = f"resource://audio/{uid}"
+    AUDIO_CACHE[uri] = {"url": url, "title": title, "author": author, "mimeType": mime}
+    # Giu ca uri cu de tuong thich
+    AUDIO_CACHE["resource://read_from_http"] = {"url": url, "title": title, "author": author, "mimeType": mime}
     return {
         "type": "resource_link",
-        "uri": "resource://read_from_http",
+        "uri": uri,
         "url": url, "title": title, "author": author,
         "mimeType": mime, "source": source,
     }
@@ -172,6 +179,35 @@ async def bridge():
                     q = args.get("query", args.get("q", "Viet Nam"))
                     content = await handle_tool(name, q)
                     await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"content": content}}))
+                elif method in ("resources/list", "resources/read"):
+                    # Xiaozhi goi buoc 2 de lay file audio that
+                    print(f"[MCP] {method} params={req.get('params')}", flush=True)
+                    if method == "resources/list":
+                        await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"resources": [{"uri": k, "name": v.get("title",""), "mimeType": v.get("mimeType","audio/mpeg")} for k, v in AUDIO_CACHE.items()]}}))
+                    else:
+                        params = req.get("params", {})
+                        uri = params.get("uri", "resource://read_from_http")
+                        # Neu uri la URL truc tiep, dung luon
+                        audio_url = AUDIO_CACHE.get(uri, {}).get("url") or (uri if uri.startswith("http") else None)
+                        if not audio_url and AUDIO_CACHE:
+                            # Fallback: lay bai moi nhat
+                            audio_url = list(AUDIO_CACHE.values())[-1].get("url")
+                        if audio_url:
+                            try:
+                                async with httpx.AsyncClient(timeout=20, headers=UA) as ac:
+                                    ar = await ac.get(audio_url)
+                                    if ar.status_code == 200:
+                                        blob = base64.b64encode(ar.content).decode()
+                                        print(f"[MCP] resources/read OK {len(ar.content)} bytes from {audio_url[:60]}", flush=True)
+                                        await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": [{"uri": uri, "mimeType": "audio/mpeg", "blob": blob}]}}))
+                                    else:
+                                        # Neu khong tai duoc, tra ve URL de client tu tai
+                                        await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": [{"uri": uri, "mimeType": "text/plain", "text": audio_url}]}}))
+                            except Exception as e:
+                                print(f"[MCP] resources/read loi: {e}", flush=True)
+                                await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": [{"uri": uri, "mimeType": "text/plain", "text": audio_url}]}}))
+                        else:
+                            await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": []}}))
                 elif method == "ping":
                     await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {}}))
     except Exception as e:
