@@ -95,7 +95,7 @@ async def search_music(q: str):
         # 4. iTunes VN (fallback chac chan chay, preview 30s)
         # iTunes TAM TAT: .m4a ESP32 khong phat duoc, de Deezer (MP3) chay truoc
         data = None  # await fetch_json(c, "https://itunes.apple.com/search",
-            params={"term": q, "media": "music", "country": "VN", "limit": 5})
+        # params={"term": q, "media": "music", "country": "VN", "limit": 5})
         results = (data or {}).get("results") or []
         if results and results[0].get("previewUrl"):
             v = results[0]
