@@ -32,11 +32,3 @@ Bạn là trợ lý robot tiếng Việt.
 Khi người dùng yêu cầu nghe nhạc, BẮT BUỘC gọi tool search_music / play_song, không được tự bịa link nhạc.
 Khi người dùng hỏi tin tức, thời sự, giá vàng, thời tiết, sự kiện hôm nay, BẮT BUỘC gọi tool brave_search / get_news trước rồi mới trả lời, không được bịa tin.
 Luôn trả lời bằng tiếng Việt, ngắn gọn, dễ nghe qua loa.
-
-
-## FIX V3 - KHONG TIM DUOC NHAC VIET, CHI RA NHAC TRUNG
-Nguyen nhan: Trong xiaozhi.me, o Am nhac chinh thuc dang tich, no uu tien hon MCP.
-Cach sua:
-1. Vao xiaozhi.me > Agent > Mo rong > BO TICH o Am nhac (chinh thuc). Chi de lai MCP.
-2. Deploy ban V3 nay len Render (code search_music da doi sang Invidious/YouTube that).
-3. Test: 'Tim bai See Tinh cua Hoang Thuy Linh va phat di' - phai ra bai tren YouTube, khong phai bai Trung.

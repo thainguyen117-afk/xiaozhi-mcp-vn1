@@ -38,38 +38,75 @@ async def get_news(query: str = "Việt Nam", category: str = ""):
         arts = data.get("articles", [])
         return {"articles": [{"title": a.get("title"), "description": a.get("description"), "url": a.get("url"), "publishedAt": a.get("publishedAt")} for a in arts]}
 
+async def get_audio_url(video_id: str):
+    """Lay link audio truc tiep tu Piped / Invidious - de ESP32 phat duoc."""
+    piped_instances = ["https://piped.video", "https://piped.privacyredirect.com", "https://piped.adminforge.de"]
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+        for inst in piped_instances:
+            try:
+                r = await c.get(f"{inst}/api/v1/streams/{video_id}")
+                if r.status_code == 200:
+                    d = r.json()
+                    audios = d.get("audioStreams") or []
+                    if audios:
+                        # Uu tien opus/m4a, bitrate cao
+                        audios = sorted(audios, key=lambda x: x.get("bitrate", 0), reverse=True)
+                        return audios[0].get("url"), d.get("title"), d.get("uploader")
+            except Exception:
+                continue
+        # Fallback Invidious latest_version
+        for inst in ["https://invidious.0011.lt", "https://inv.nadeko.net"]:
+            try:
+                url = f"{inst}/latest_version?id={video_id}&itag=140&local=true"
+                return url, "", ""
+            except Exception:
+                continue
+    return None, "", ""
+
 async def search_music(q: str):
-    """Tim nhac Viet that qua Invidious (YouTube) - tra ve link phat duoc."""
-    # Danh sach Invidious instance public, thu lan luot
-    instances = [
-        "https://invidious.0011.lt",
-        "https://inv.nadeko.net",
-        "https://invidious.privacyredirect.com",
-        "https://yt.ahmadinejad.ir",
-    ]
+    """Tim nhac Viet tren YouTube, tra ve DANG XIAOZHI HIEU DE PHAT."""
+    instances = ["https://invidious.0011.lt", "https://inv.nadeko.net", "https://invidious.privacyredirect.com"]
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
         for inst in instances:
             try:
                 r = await c.get(f"{inst}/api/v1/search", params={"q": q, "type": "video"})
-                if r.status_code == 200:
-                    data = r.json()
-                    if data:
-                        v = data[0]
-                        vid = v.get("videoId")
+                if r.status_code == 200 and r.json():
+                    v = r.json()[0]
+                    vid = v.get("videoId")
+                    title = v.get("title")
+                    author = v.get("author")
+                    audio_url, _, _ = await get_audio_url(vid)
+                    if audio_url:
+                        # DAY LA FORMAT CHUAN DE XIAOZHI PHAT, KHONG PHAI LINK YOUTUBE WATCH
                         return {
-                            "title": v.get("title"),
-                            "author": v.get("author"),
-                            "videoId": vid,
-                            "play_url": f"https://www.youtube.com/watch?v={vid}",
-                            "audio_url": f"{inst}/latest_version?id={vid}&itag=140&local=true",
                             "type": "resource_link",
                             "uri": "resource://read_from_http",
-                            "note": "Day la bai hat tim duoc tren YouTube, dung play_url de phat"
+                            "url": audio_url,
+                            "title": title,
+                            "author": author,
+                            "videoId": vid,
+                            "play_url": audio_url,
+                            "note": f"Dang phat: {title} - {author}. Day la link audio truc tiep, hay phat ngay."
                         }
+                    return {"title": title, "author": author, "videoId": vid, "note": "Tim thay bai roi nhung chua lay duoc audio, hay goi play_music voi videoId nay"}
             except Exception:
                 continue
-    # Fallback: tra ve YouTube search URL de model biet bai nao
-    return {"query": q, "play_url": f"https://www.youtube.com/results?search_query={q}", "note": "Invidious tam loi, hay thu lai sau 1 phut"}
+    return {"query": q, "note": "Khong tim thay, hay thu lai voi ten bai + ten ca si"}
+
+async def play_music(videoId: str = "", q: str = "", url: str = ""):
+    """Tool rieng de phat - Xiaozhi goi tool nay thi no se phat duoc."""
+    vid = videoId or ""
+    if not vid and url and "v=" in url:
+        vid = url.split("v=")[-1].split("&")[0]
+    if not vid and q:
+        # Tim roi lay audio
+        res = await search_music(q)
+        return res
+    if vid:
+        audio_url, title, author = await get_audio_url(vid)
+        if audio_url:
+            return {"type": "resource_link", "uri": "resource://read_from_http", "url": audio_url, "title": title, "author": author, "note": "Dang phat nhac, hay phat url nay ngay"}
+    return {"error": "Khong lay duoc audio, hay thu bai khac"}
 
 @app.get("/health")
 async def health():
