@@ -34,8 +34,9 @@ Khi người dùng hỏi tin tức, thời sự, giá vàng, thời tiết, sự
 Luôn trả lời bằng tiếng Việt, ngắn gọn, dễ nghe qua loa.
 
 
-## UPDATE 08/11 - KHONG DANG KY DUOC BRAVE THI LAM SAO?
-Bo Brave. Dung 1 trong 2 cach sau:
-Cach A (khuyen dung): Dang ky Tavily tai https://tavily.com - Free 1000 search/thang, khong can the. Lay TAVILY_API_KEY dien vao Render thay cho BRAVE_API_KEY.
-Cach B (khong can key): De trong TAVILY_API_KEY, code se tu dung DuckDuckGo + RSS VnExpress de search tin tuc. Yeu hon nhung van chay.
-Tin tuc VN khong can key: RSS VnExpress https://vnexpress.net/rss/tin-moi-nhat.rss , Tuoi Tre, Thanh Nien.
+## FIX V3 - KHONG TIM DUOC NHAC VIET, CHI RA NHAC TRUNG
+Nguyen nhan: Trong xiaozhi.me, o Am nhac chinh thuc dang tich, no uu tien hon MCP.
+Cach sua:
+1. Vao xiaozhi.me > Agent > Mo rong > BO TICH o Am nhac (chinh thuc). Chi de lai MCP.
+2. Deploy ban V3 nay len Render (code search_music da doi sang Invidious/YouTube that).
+3. Test: 'Tim bai See Tinh cua Hoang Thuy Linh va phat di' - phai ra bai tren YouTube, khong phai bai Trung.

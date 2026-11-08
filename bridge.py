@@ -13,27 +13,19 @@ import uvicorn
 
 MCP_ENDPOINT = os.getenv("MCP_ENDPOINT", "")
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")  # thay Brave, dang ky free khong can the
 NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")
 MUSIC_BASE = "https://mp3.mrhung.io.vn"
 
 app = FastAPI()
 
 async def brave_search(query: str):
-    # 1. Uu tien Tavily (free, khong can the) - thay Brave
-    if TAVILY_API_KEY:
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.post("https://api.tavily.com/search",
-                json={"api_key": TAVILY_API_KEY, "query": query, "max_results": 5, "search_depth": "basic", "include_answer": True})
-            return r.json()
-    # 2. Fallback khong can key: DuckDuckGo Instant Answer
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get("https://api.duckduckgo.com/", params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1})
-            d = r.json()
-            return {"answer": d.get("AbstractText"), "results": [{"title": x.get("Text"), "url": x.get("FirstURL")} for x in d.get("RelatedTopics", [])[:5]]}
-    except Exception as e:
-        return {"error": f"Khong search duoc, can TAVILY_API_KEY. Loi: {e}"}
+    if not BRAVE_API_KEY:
+        return {"error": "Chua co BRAVE_API_KEY"}
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get("https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": 5},
+            headers={"Accept": "application/json", "X-Subscription-Token": BRAVE_API_KEY})
+        return r.json()
 
 async def get_news(query: str = "Việt Nam", category: str = ""):
     if not NEWS_API_KEY:
@@ -47,19 +39,41 @@ async def get_news(query: str = "Việt Nam", category: str = ""):
         return {"articles": [{"title": a.get("title"), "description": a.get("description"), "url": a.get("url"), "publishedAt": a.get("publishedAt")} for a in arts]}
 
 async def search_music(q: str):
+    """Tim nhac Viet that qua Invidious (YouTube) - tra ve link phat duoc."""
+    # Danh sach Invidious instance public, thu lan luot
+    instances = [
+        "https://invidious.0011.lt",
+        "https://inv.nadeko.net",
+        "https://invidious.privacyredirect.com",
+        "https://yt.ahmadinejad.ir",
+    ]
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
-        # Thử endpoint public của mp3.mrhung.io.vn, fallback trả hướng dẫn
-        try:
-            r = await c.get(f"{MUSIC_BASE}/search", params={"q": q})
-            if r.status_code == 200:
-                return r.json()
-        except Exception as e:
-            pass
-        return {"query": q, "note": "Goi /search tren MUSIC_BASE, neu khong co ket qua hay doi source trong file bridge.py", "try_url": f"{MUSIC_BASE}/search?q={q}"}
+        for inst in instances:
+            try:
+                r = await c.get(f"{inst}/api/v1/search", params={"q": q, "type": "video"})
+                if r.status_code == 200:
+                    data = r.json()
+                    if data:
+                        v = data[0]
+                        vid = v.get("videoId")
+                        return {
+                            "title": v.get("title"),
+                            "author": v.get("author"),
+                            "videoId": vid,
+                            "play_url": f"https://www.youtube.com/watch?v={vid}",
+                            "audio_url": f"{inst}/latest_version?id={vid}&itag=140&local=true",
+                            "type": "resource_link",
+                            "uri": "resource://read_from_http",
+                            "note": "Day la bai hat tim duoc tren YouTube, dung play_url de phat"
+                        }
+            except Exception:
+                continue
+    # Fallback: tra ve YouTube search URL de model biet bai nao
+    return {"query": q, "play_url": f"https://www.youtube.com/results?search_query={q}", "note": "Invidious tam loi, hay thu lai sau 1 phut"}
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "has_mcp": bool(MCP_ENDPOINT), "has_tavily": bool(TAVILY_API_KEY), "has_brave": bool(BRAVE_API_KEY), "search_mode": "tavily" if TAVILY_API_KEY else "duckduckgo-free-no-key", "has_news": bool(NEWS_API_KEY)}
+    return {"status": "ok", "has_mcp": bool(MCP_ENDPOINT), "has_brave": bool(BRAVE_API_KEY), "has_news": bool(NEWS_API_KEY)}
 
 @app.get("/search")
 async def http_search(q: str = "sontung"):
