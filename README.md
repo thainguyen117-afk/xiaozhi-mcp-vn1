@@ -2,8 +2,7 @@
 
 ## Bạn cần chuẩn bị 3 thứ (mất 5 phút, không code)
 1. Vào xiaozhi.me > Agent của bạn > MCP Endpoint > Regenerate Token mới
-   - Token cũ đã lộ, KHÔNG dùng lại.
-   - Copy token mới dạng: wss://api.xiaozhi.me/mcp/?token=...
+    - Copy token mới dạng: wss://api.xiaozhi.me/mcp/?token=...
 2. Vào https://brave.com/search/api/ đăng ký Free -> lấy BRAVE_API_KEY
 3. Vào https://newsapi.org/ đăng ký Free -> lấy NEWS_API_KEY
 
