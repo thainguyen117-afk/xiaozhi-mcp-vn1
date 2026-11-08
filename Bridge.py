@@ -4,7 +4,7 @@ Chay: python bridge.py
 Env: MCP_ENDPOINT, TAVILY_API_KEY
 Tools: brave_search, get_news, search_music, play_music, get_top_charts
 """
-import asyncio, base64, json, os
+import asyncio, hashlib, json, os
 import httpx
 import uvicorn
 import websockets
@@ -17,19 +17,17 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 PORT = int(os.getenv("PORT", "10000"))
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36"}
 SC_CLIENT_ID = os.getenv("SOUNDCLOUD_CLIENT_ID", "iZIs9mchVcX5lhVRyQGGAYlNPVldzAo")
-AUDIO_CACHE = {}  # uri -> url audio that, de resources/read lay file that
+AUDIO_CACHE = {}
 
 app = FastAPI()
 
 # ---------- Helpers ----------
 def music_result(url, title, author, source, mime="audio/mpeg"):
-    """Format chuan de Xiaozhi phat: uri rieng cho tung bai, de resources/read biet lay file nao."""
-    import hashlib
+    """Format chuan de Xiaozhi phat: resource_link, khong phai text."""
     uid = hashlib.md5(url.encode()).hexdigest()[:12]
     uri = f"resource://audio/{uid}"
     AUDIO_CACHE[uri] = {"url": url, "title": title, "author": author, "mimeType": mime}
-    # Giu ca uri cu de tuong thich
-    AUDIO_CACHE["resource://read_from_http"] = {"url": url, "title": title, "author": author, "mimeType": mime}
+    AUDIO_CACHE["resource://read_from_http"] = AUDIO_CACHE[uri]
     return {
         "type": "resource_link",
         "uri": uri,
@@ -62,47 +60,54 @@ async def get_news(query: str = "Viet Nam"):
 # ---------- Music: Zing -> NCT -> SoundCloud -> iTunes -> Deezer ----------
 async def search_music(q: str):
     async with httpx.AsyncClient(timeout=15, headers=UA, follow_redirects=True) as c:
-        # 1. Deezer TRUOC - vi tra ve .mp3, ESP32 phat duoc ngay
-        data = await fetch_json(c, "https://api.deezer.com/search", params={"q": q})
-        items = (data or {}).get("data") or []
-        if items and items[0].get("preview"):
-            v = items[0]
-            return music_result(v["preview"], v.get("title"), (v.get("artist") or {}).get("name"), "deezer", "audio/mpeg")
-        # 2. SoundCloud - .mp3
+        # 1. SoundCloud (on dinh nhat, co stream mp3 truc tiep)
         data = await fetch_json(c, "https://api-v2.soundcloud.com/search/tracks",
             params={"q": q, "client_id": SC_CLIENT_ID, "limit": 5})
         if data:
             for v in data.get("collection", []):
-                streams = await fetch_json(c, f"https://api-v2.soundcloud.com/tracks/{v.get('id')}/streams",
+                tid = v.get("id")
+                streams = await fetch_json(c, f"https://api-v2.soundcloud.com/tracks/{tid}/streams",
                     params={"client_id": SC_CLIENT_ID})
-                url = (streams or {}).get("http_mp3_128_url")
+                url = (streams or {}).get("http_mp3_128_url") or (streams or {}).get("hls_url")
                 if url:
-                    return music_result(url, v.get("title"), (v.get("user") or {}).get("username"), "soundcloud", "audio/mpeg")
-        # 3. Zing MP3 - .mp3
+                    return music_result(url, v.get("title"), (v.get("user") or {}).get("username"), "soundcloud")
+
+        # 2. Zing MP3
         data = await fetch_json(c, "https://zingmp3.vn/api/v2/search", params={"q": q})
         songs = ((data or {}).get("data") or {}).get("songs") or []
         if songs:
             v = songs[0]
-            stream = await fetch_json(c, "https://zingmp3.vn/api/v2/song/get/streaming", params={"id": v.get("encodeId")})
+            stream = await fetch_json(c, "https://zingmp3.vn/api/v2/song/get/streaming",
+                params={"id": v.get("encodeId")})
             url = ((stream or {}).get("data") or {}).get("128")
             if url:
-                return music_result(url, v.get("title"), v.get("artistsNames"), "zingmp3", "audio/mpeg")
-        # 4. Nhaccuatui
+                return music_result(url, v.get("title"), v.get("artistsNames"), "zingmp3")
+
+        # 3. Nhaccuatui
         data = await fetch_json(c, "https://www.nhaccuatui.com/api/search", params={"q": q, "type": "song"})
         items = (data or {}).get("data") or (data or {}).get("songs") or []
         if items:
             v = items[0]
             url = v.get("streamUrl") or v.get("previewUrl")
-            if url and ".mp3" in url:
-                return music_result(url, v.get("title") or v.get("name"), v.get("artist"), "nhaccuatui", "audio/mpeg")
-        # 5. iTunes - CHI LA DU PHONG, vi no la .m4a, ESP32 KHONG phat duoc, chi de test
-        data = await fetch_json(c, "https://itunes.apple.com/search",
+            if url:
+                return music_result(url, v.get("title") or v.get("name"), v.get("artist"), "nhaccuatui")
+
+        # 4. iTunes VN (fallback chac chan chay, preview 30s)
+        # iTunes TAM TAT: .m4a ESP32 khong phat duoc, de Deezer (MP3) chay truoc
+        data = None  # await fetch_json(c, "https://itunes.apple.com/search",
             params={"term": q, "media": "music", "country": "VN", "limit": 5})
         results = (data or {}).get("results") or []
         if results and results[0].get("previewUrl"):
             v = results[0]
-            print(f"[WARN] Chi con iTunes .m4a, ESP32 se khong phat duoc: {v.get('trackName')}", flush=True)
-            return music_result(v["previewUrl"], v.get("trackName"), v.get("artistName"), "itunes-m4a-KHONG-PHAT-DUOC", "audio/mp4")
+            return music_result(v["previewUrl"], v.get("trackName"), v.get("artistName"), "itunes", "audio/mp4")
+
+        # 5. Deezer (fallback)
+        data = await fetch_json(c, "https://api.deezer.com/search", params={"q": q})
+        items = (data or {}).get("data") or []
+        if items and items[0].get("preview"):
+            v = items[0]
+            return music_result(v["preview"], v.get("title"), (v.get("artist") or {}).get("name"), "deezer")
+
     return {"error": f"Khong tim thay bai '{q}'", "note": "Thu ten bai + ten ca si khac"}
 
 # ---------- HTTP (de test nhanh) ----------
@@ -142,6 +147,7 @@ async def handle_tool(name: str, q: str):
     if name == "get_news":
         return [{"type": "text", "text": json.dumps(await get_news(q), ensure_ascii=False)[:4000]}]
     if name in ("search_music", "play_music"):
+        print(f"[MCP] {name} called q={q}", flush=True)
         out = await search_music(q)
         if out.get("type") == "resource_link":  # QUAN TRONG: tra dung dang resource_link
             return [{"type": "resource_link", "uri": out["uri"], "url": out["url"],
@@ -180,34 +186,16 @@ async def bridge():
                     content = await handle_tool(name, q)
                     await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"content": content}}))
                 elif method in ("resources/list", "resources/read"):
-                    # Xiaozhi goi buoc 2 de lay file audio that
                     print(f"[MCP] {method} params={req.get('params')}", flush=True)
                     if method == "resources/list":
                         await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"resources": [{"uri": k, "name": v.get("title",""), "mimeType": v.get("mimeType","audio/mpeg")} for k, v in AUDIO_CACHE.items()]}}))
                     else:
-                        params = req.get("params", {})
-                        uri = params.get("uri", "resource://read_from_http")
-                        # Neu uri la URL truc tiep, dung luon
+                        uri = (req.get("params") or {}).get("uri", "resource://read_from_http")
                         audio_url = AUDIO_CACHE.get(uri, {}).get("url") or (uri if uri.startswith("http") else None)
                         if not audio_url and AUDIO_CACHE:
-                            # Fallback: lay bai moi nhat
                             audio_url = list(AUDIO_CACHE.values())[-1].get("url")
-                        if audio_url:
-                            try:
-                                async with httpx.AsyncClient(timeout=20, headers=UA) as ac:
-                                    ar = await ac.get(audio_url)
-                                    if ar.status_code == 200:
-                                        blob = base64.b64encode(ar.content).decode()
-                                        print(f"[MCP] resources/read OK {len(ar.content)} bytes from {audio_url[:60]}", flush=True)
-                                        await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": [{"uri": uri, "mimeType": "audio/mpeg", "blob": blob}]}}))
-                                    else:
-                                        # Neu khong tai duoc, tra ve URL de client tu tai
-                                        await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": [{"uri": uri, "mimeType": "text/plain", "text": audio_url}]}}))
-                            except Exception as e:
-                                print(f"[MCP] resources/read loi: {e}", flush=True)
-                                await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": [{"uri": uri, "mimeType": "text/plain", "text": audio_url}]}}))
-                        else:
-                            await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": []}}))
+                        print(f"[MCP] resources/read -> URL only, khong gui blob: {str(audio_url)[:80]}", flush=True)
+                        await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"contents": [{"uri": uri, "mimeType": "text/plain", "text": audio_url or ""}]}}))
                 elif method == "ping":
                     await ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {}}))
     except Exception as e:
